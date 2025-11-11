@@ -35,7 +35,7 @@ export default async function AdminPage() {
   try {
     const profilePromise = supabase
       .from('user_profiles')
-      .select('*')
+        .select('*')
       .eq('id', sessionUser.id)
       .single();
 
@@ -61,7 +61,7 @@ export default async function AdminPage() {
   let restaurants: any[] = [];
   try {
     const restaurantsPromise = supabase
-      .from('restaurants')
+          .from('restaurants')
       .select('*')
       .order('name', { ascending: true });
 
@@ -75,7 +75,7 @@ export default async function AdminPage() {
     restaurants = [];
   }
 
-  return (
+    return (
     <AdminDashboard
       initialUser={sessionUser}
       initialUserProfile={userProfile}

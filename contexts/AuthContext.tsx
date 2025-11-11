@@ -41,22 +41,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
 
   const loadUserProfile = async (userId: string) => {
-    // Prevent duplicate loads
     if (isLoadingProfile) {
       console.log('[AuthContext] Profile load already in progress, skipping...');
       return;
     }
 
+    setIsLoadingProfile(true);
     try {
       console.log('[AuthContext] Loading profile for user:', userId);
-      setIsLoadingProfile(true);
 
-      const { data: profileData, error: profileError } = await supabase
+      // Profile query with timeout
+      const profilePromise = supabase
         .from('user_profiles')
         .select('*')
         .eq('id', userId)
         .maybeSingle();
+      const profileResult = (await Promise.race([
+        profilePromise as any,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('profile_timeout')), 2500)),
+      ])) as any;
 
+      const profileError = profileResult?.error;
+      const profileData = profileResult?.data;
       console.log('[AuthContext] Profile query result:', { profileData, profileError });
 
       if (profileError) {
@@ -73,36 +79,58 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       console.log('[AuthContext] Profile loaded:', profileData.role, profileData.email);
 
-      const { data: subscriptionsData, error: subsError } = await supabase
-        .from('subscriptions')
-        .select('*')
-        .eq('user_id', userId);
-
-      if (subsError) {
-        console.error('[AuthContext] Subscriptions query error:', subsError);
+      // Subscriptions with timeout (non-blocking failure)
+      let subscriptionsData: Subscription[] | null = null;
+      try {
+        const subsPromise = supabase
+          .from('subscriptions')
+          .select('*')
+          .eq('user_id', userId);
+        const subsResult = (await Promise.race([
+          subsPromise as any,
+          new Promise((_, reject) => setTimeout(() => reject(new Error('subs_timeout')), 2000)),
+        ])) as any;
+        if (!subsResult?.error) {
+          subscriptionsData = subsResult?.data || [];
+        }
+      } catch (e) {
+        console.warn('[AuthContext] Subscriptions query timed out/failed');
       }
 
-      const { data: assignmentsData, error: assignError } = await supabase
-        .from('local_hero_assignments')
-        .select('city_name')
-        .eq('user_id', userId)
-        .eq('is_active', true);
-
-      if (assignError) {
-        console.error('[AuthContext] Assignments query error:', assignError);
+      // Assignments with timeout (non-blocking failure)
+      let assignmentsData: { city_name: string }[] | null = null;
+      try {
+        const assignPromise = supabase
+          .from('local_hero_assignments')
+          .select('city_name')
+          .eq('user_id', userId)
+          .eq('is_active', true);
+        const assignResult = (await Promise.race([
+          assignPromise as any,
+          new Promise((_, reject) => setTimeout(() => reject(new Error('assign_timeout')), 2000)),
+        ])) as any;
+        if (!assignResult?.error) {
+          assignmentsData = assignResult?.data || [];
+        }
+      } catch (e) {
+        console.warn('[AuthContext] Assignments query timed out/failed');
       }
 
       const profile: UserProfile = {
         ...profileData,
         subscriptions: subscriptionsData || [],
-        assignedCities: assignmentsData?.map((a: any) => a.city_name) || [],
+        assignedCities: (assignmentsData || []).map((a: any) => a.city_name),
       };
 
       setUserProfile(profile);
       setPermissions(getRolePermissions(profile.role, profile.subscriptions || []));
       console.log('[AuthContext] Profile state updated successfully');
     } catch (error) {
-      console.error('[AuthContext] Fatal error loading user profile:', error);
+      if ((error as any)?.message === 'profile_timeout') {
+        console.error('[AuthContext] Profile load timed out; using minimal permissions');
+      } else {
+        console.error('[AuthContext] Fatal error loading user profile:', error);
+      }
       setUserProfile(null);
       setPermissions(getRolePermissions(null, []));
     } finally {
@@ -117,22 +145,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const initializeAuth = async () => {
       try {
         console.log('[AuthContext] Initializing authentication...');
-        const { data: { session }, error } = await supabase.auth.getSession();
 
-        if (error) {
-          console.error('[AuthContext] Error getting session:', error);
-          if (mounted) {
-            setLoading(false);
-          }
-          return;
+        // getSession with timeout to avoid hanging
+        let session: { user: User } | null = null;
+        try {
+          const sessionResult = (await Promise.race([
+            supabase.auth.getSession() as any,
+            new Promise((_, reject) => setTimeout(() => reject(new Error('session_timeout')), 2500)),
+          ])) as any;
+          session = sessionResult?.data?.session || null;
+        } catch (e) {
+          console.error('[AuthContext] Session check failed/timed out');
         }
-
-        console.log('[AuthContext] Session retrieved:', session ? 'User logged in' : 'No session');
 
         if (mounted) {
           setUser(session?.user ?? null);
           if (session?.user) {
-            console.log('[AuthContext] Loading user profile for:', session.user.email);
+            console.log('[AuthContext] Loading user profile for:', (session.user as any).email);
             await loadUserProfile(session.user.id);
             if (mounted) setLoading(false);
           } else {
@@ -157,7 +186,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       console.log('[AuthContext] Auth state changed:', event, session ? 'User present' : 'No user');
 
-      // Handle SIGNED_OUT event explicitly
       if (event === 'SIGNED_OUT') {
         console.log('[AuthContext] User signed out, clearing all state');
         setUser(null);
@@ -167,12 +195,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // Handle TOKEN_REFRESHED event
       if (event === 'TOKEN_REFRESHED') {
         console.log('[AuthContext] Token refreshed');
         setUser(session?.user ?? null);
-        // Only set loading to false if we already have a profile loaded
-        // Otherwise, let the normal flow load the profile
         if (userProfile && mounted) {
           console.log('[AuthContext] Profile already loaded, skipping reload');
           setLoading(false);
@@ -201,7 +226,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           await loadUserProfile(session.user.id);
         } catch (err) {
           console.error('[AuthContext] Error loading profile after auth change:', err);
-          // Keep user but clear profile on error
           if (mounted) {
             setUserProfile(null);
             setPermissions(getRolePermissions(null, []));
@@ -231,8 +255,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signInWithGoogle = async () => {
-    // Use Supabase's built-in OAuth for simplicity
-    // The edge function is available if custom handling is needed
     const redirectUrl = 'https://nuggetrecovery.vercel.app/login';
 
     const { error } = await supabase.auth.signInWithOAuth({
@@ -270,7 +292,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (err: any) {
       console.error('Signup failed:', err);
 
-      // Check for common error patterns
       if (err.message?.includes('ERR_NAME_NOT_RESOLVED') || err.message?.includes('Failed to fetch')) {
         return {
           error: {
@@ -324,12 +345,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       console.log('[AuthContext] Signing out...');
 
-      // Clear local state first
       setUser(null);
       setUserProfile(null);
       setPermissions(getRolePermissions(null, []));
 
-      // Sign out from Supabase with scope: 'local' to clear cookies
       const { error } = await supabase.auth.signOut({ scope: 'local' });
 
       if (error) {
@@ -338,10 +357,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.log('[AuthContext] Successfully signed out from Supabase');
       }
 
-      // Additional cleanup: Clear any lingering storage
       if (typeof window !== 'undefined') {
         try {
-          // Clear Supabase-related items from localStorage
           const keys = Object.keys(localStorage);
           keys.forEach(key => {
             if (key.startsWith('supabase.auth.')) {
@@ -355,7 +372,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       console.log('[AuthContext] Local state cleared, redirecting to home...');
 
-      // Use window.location for a hard redirect to ensure clean state
       if (typeof window !== 'undefined') {
         window.location.href = '/';
       } else {
@@ -364,7 +380,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     } catch (error) {
       console.error('[AuthContext] Fatal error signing out:', error);
-      // Still try to clear local state and redirect
       setUser(null);
       setUserProfile(null);
       setPermissions(getRolePermissions(null, []));

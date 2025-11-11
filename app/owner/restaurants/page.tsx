@@ -71,7 +71,7 @@ export default function MyRestaurantsPage() {
     }
 
     // Load data once user is confirmed
-    loadRestaurants();
+      loadRestaurants();
   }, [user, authLoading]);
 
   useEffect(() => {

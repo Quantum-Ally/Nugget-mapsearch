@@ -68,7 +68,7 @@ export default function OwnerDashboardPage() {
     }
 
     // Load data once user is confirmed
-    loadDashboardData();
+      loadDashboardData();
   }, [user, authLoading]);
 
   const loadDashboardData = async () => {

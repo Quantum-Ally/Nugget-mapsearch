@@ -310,7 +310,7 @@ export default function AddRestaurantPage() {
           headers: testHeaders,
           signal: AbortSignal.timeout(5000),
         });
-        
+
         const fetchResult = await fetchPromise;
         console.log('[DEBUG] Direct fetch result:', {
           status: fetchResult.status,
@@ -380,8 +380,8 @@ export default function AddRestaurantPage() {
               verified: true,
             },
             analyticsData: {
-              date: new Date().toISOString().split('T')[0],
-              views: 0,
+          date: new Date().toISOString().split('T')[0],
+          views: 0,
             },
           }),
           signal: AbortSignal.timeout(30000),
@@ -390,7 +390,7 @@ export default function AddRestaurantPage() {
         console.log('[DEBUG] API response status:', apiResponse.status);
         
         const apiResult = await apiResponse.json();
-        
+
         if (!apiResponse.ok) {
           console.error('[DEBUG] API error response:', apiResult);
           restaurantError = {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserRole } from '@/lib/types/roles';
@@ -22,38 +22,59 @@ export function useRequireAuth(options: UseRequireAuthOptions = {}) {
   const { user, userProfile, loading: authLoading } = useAuth();
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [isChecking, setIsChecking] = useState(true);
+  const profileWaitTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
-    // Wait for auth to finish loading
+    // Clear any existing timer when dependencies change
+    if (profileWaitTimerRef.current) {
+      window.clearTimeout(profileWaitTimerRef.current);
+      profileWaitTimerRef.current = null;
+    }
+
+    // Still loading auth
     if (authLoading) {
       return;
     }
 
-    // Check if user is logged in
+    // Not logged in
     if (!user) {
       router.push(redirectTo);
       return;
     }
 
-    // If we need userProfile for role checking, wait for it
-    if (requiredRole && !userProfile) {
-      // Profile is still loading, keep waiting
+    // If no specific role required, authorize even if profile hasn't loaded yet
+    if (!requiredRole) {
+      setIsAuthorized(true);
+      setIsChecking(false);
       return;
     }
 
-    // Check role requirement
-    if (requiredRole) {
-      const roleMatches = userProfile?.role === requiredRole;
-      const adminOverride = allowAdminOverride && userProfile?.role === 'admin';
-
-      if (!roleMatches && !adminOverride) {
-        router.push('/');
-        return;
-      }
+    // If requiredRole is present but profile not yet available, start a max-wait timer
+    if (!userProfile) {
+      profileWaitTimerRef.current = window.setTimeout(() => {
+        // After timeout, fail safe: if we cannot verify role, do not keep spinning
+        if (allowAdminOverride) {
+          // We can't confirm admin without profile, so redirect to home
+          router.push('/');
+        } else {
+          router.push('/');
+        }
+        setIsAuthorized(false);
+        setIsChecking(false);
+      }, 2500);
+      return;
     }
 
-    // Check if we should redirect authorized users
-    if (redirectIfAuthorized && user && userProfile) {
+    // Role check with admin override
+    const roleMatches = userProfile.role === requiredRole;
+    const adminOverride = allowAdminOverride && userProfile.role === 'admin';
+    if (!roleMatches && !adminOverride) {
+      router.push('/');
+      return;
+    }
+
+    // Redirect authorized users if needed
+    if (redirectIfAuthorized) {
       router.push(redirectIfAuthorized);
       return;
     }
