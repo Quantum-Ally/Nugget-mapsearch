@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
@@ -20,9 +20,10 @@ export default function LoginPage() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [shouldRedirect, setShouldRedirect] = useState(false);
   const [redirectTo, setRedirectTo] = useState<string | null>(null);
-  const { signIn, signInWithGoogle, userProfile, refreshProfile, user } = useAuth();
+  const { signIn, signInWithGoogle, userProfile, refreshProfile, user, loading: authLoading } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const redirectedOnceRef = useRef(false);
 
   useEffect(() => {
     const redirect = searchParams.get('redirect');
@@ -37,11 +38,7 @@ export default function LoginPage() {
       if (hashParams.has('access_token')) {
         console.log('OAuth callback detected, triggering redirect...');
         setGoogleLoading(true);
-        // The AuthContext will handle the session automatically
-        // Just set the flag to redirect once the profile loads
         setShouldRedirect(true);
-
-        // Clean up the URL hash after a short delay
         setTimeout(() => {
           window.history.replaceState(null, '', window.location.pathname);
         }, 100);
@@ -49,28 +46,48 @@ export default function LoginPage() {
     }
   }, [searchParams]);
 
+  // Auto-redirect when already signed-in and profile is available
   useEffect(() => {
-    if (shouldRedirect && userProfile && user) {
-      console.log('Redirecting user. redirectTo:', redirectTo, 'userProfile.role:', userProfile.role);
+    if (redirectedOnceRef.current) return;
+
+    if (!authLoading && user && userProfile) {
+      console.log('Auto-redirect from login. redirectTo:', redirectTo, 'role:', userProfile.role);
+      redirectedOnceRef.current = true;
       if (redirectTo) {
-        console.log('Using redirect param:', redirectTo);
-        router.push(redirectTo);
+        router.replace(redirectTo);
       } else if (userProfile.role === 'admin') {
-        console.log('Redirecting admin to /admin');
-        router.push('/admin');
+        router.replace('/admin');
       } else if (userProfile.role === 'owner') {
-        console.log('Redirecting owner to /owner/dashboard');
-        router.push('/owner/dashboard');
+        router.replace('/owner/dashboard');
       } else if (userProfile.role === 'local_hero') {
-        console.log('Redirecting local hero to /local-hero/dashboard');
-        router.push('/local-hero/dashboard');
+        router.replace('/local-hero/dashboard');
       } else {
-        console.log('Redirecting user to /');
-        router.push('/');
+        router.replace('/');
+      }
+    }
+  }, [authLoading, user, userProfile, router, redirectTo]);
+
+  // Redirect after explicit sign-in
+  useEffect(() => {
+    if (redirectedOnceRef.current) return;
+
+    if (!authLoading && shouldRedirect && user && userProfile) {
+      console.log('Redirecting user after sign-in. redirectTo:', redirectTo, 'userProfile.role:', userProfile.role);
+      redirectedOnceRef.current = true;
+      if (redirectTo) {
+        router.replace(redirectTo);
+      } else if (userProfile.role === 'admin') {
+        router.replace('/admin');
+      } else if (userProfile.role === 'owner') {
+        router.replace('/owner/dashboard');
+      } else if (userProfile.role === 'local_hero') {
+        router.replace('/local-hero/dashboard');
+      } else {
+        router.replace('/');
       }
       setShouldRedirect(false);
     }
-  }, [shouldRedirect, userProfile, user, router, redirectTo]);
+  }, [shouldRedirect, authLoading, userProfile, user, router, redirectTo]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -97,6 +114,16 @@ export default function LoginPage() {
       setGoogleLoading(false);
     }
   };
+
+  // If we are about to redirect, show a centered loading state
+  if (!authLoading && (user && userProfile) && !redirectedOnceRef.current) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="mr-2 h-6 w-6 animate-spin" />
+        <span>Redirecting...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 p-4">

@@ -1,31 +1,28 @@
-import { cookies } from 'next/headers';
-import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
 import { redirect } from 'next/navigation';
 import AdminDashboard from './AdminDashboard';
+import { createClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export default async function AdminPage() {
-  const supabase = createServerComponentClient({ cookies });
+  const supabase = createClient();
 
   // Get session server-side with timeout to avoid hanging in deployment
-  let sessionUser = null as any;
+  let sessionUser: any = null;
   try {
     const getSessionPromise = supabase.auth.getSession();
     const sessionResult = (await Promise.race([
-      getSessionPromise,
+      getSessionPromise as any,
       new Promise((_, reject) => setTimeout(() => reject(new Error('auth_session_timeout')), 2000)),
     ])) as any;
 
     sessionUser = sessionResult?.data?.session?.user || null;
   } catch (e: any) {
-    // If auth session check times out or fails, redirect to login
     redirect('/login');
   }
 
-  // Redirect if no user
   if (!sessionUser) {
     redirect('/login');
   }
@@ -40,7 +37,7 @@ export default async function AdminPage() {
       .single();
 
     const profileResult = (await Promise.race([
-      profilePromise,
+      profilePromise as any,
       new Promise((_, reject) => setTimeout(() => reject(new Error('profile_timeout')), 2000)),
     ])) as any;
 
@@ -52,7 +49,6 @@ export default async function AdminPage() {
     redirect('/');
   }
 
-  // Redirect if not admin
   if (!userProfile || userProfile.role !== 'admin') {
     redirect('/');
   }
@@ -66,7 +62,7 @@ export default async function AdminPage() {
       .order('name', { ascending: true });
 
     const restaurantsResult = (await Promise.race([
-      restaurantsPromise,
+      restaurantsPromise as any,
       new Promise((_, reject) => setTimeout(() => reject(new Error('restaurants_timeout')), 2500)),
     ])) as any;
 
